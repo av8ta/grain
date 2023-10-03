@@ -1,0 +1,36 @@
+module Main
+
+include "sys/fs"
+include "path"
+include "string"
+include "result"
+include "array"
+include "list"
+include "bytes"
+
+let dirPath = Path.fromString("test/test-data/")
+
+let dirContents = Result.expect("Failed to readDir", Fs.readDir(dirPath))
+match (List.contains("foo.txt", dirContents)) {
+  true => void,
+  false => fail "Directory does not contain foo.txt",
+}
+
+let fooPath = Result.expect("Fail to append foo.txt", Path.append(dirPath, Path.fromString("foo.txt")))
+let fileContents = Result.expect(
+  "Fail reading foo.txt",
+  Fs.Utf8.readFile(fooPath)
+)
+assert fileContents == "foo, bar, & baz"
+
+let testFilePath = Result.expect("Fail to append path", Path.append(dirPath, Path.fromString("testFile")))
+let contents = "abc🌾123"
+Result.expect(
+  "Fail writing binary file",
+  Fs.Binary.writeFile(testFilePath, Bytes.fromString(contents))
+)
+let fileContents = Result.expect(
+  "Fail reading file",
+  Fs.Utf8.readFile(testFilePath)
+)
+assert fileContents == contents

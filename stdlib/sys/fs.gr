@@ -161,7 +161,7 @@ let errnoToFileError = errno => {
     74 => TextFileBusy,
     75 => CrossDeviceLink,
     76 => ExtensionCapabilitiesInsufficient,
-    _ => fail ""
+    _ => fail "",
   }
 }
 
@@ -171,22 +171,13 @@ provide enum RemoveType {
   RemoveDirectoryRecursive,
 }
 
-provide let remove = (path, removeType=RemoveFile) => {
-  // TODO implement
-  let fd = File.open(
-    Path.toString(path),
-    [File.Directory],
-    [File.FdReaddir],
-    [File.FdRead],
-    []
-  )
+let removeFile = path => {
+  let fd = File.open(Path.toString(path), [], [File.PathUnlinkFile], [], [])
+
   match (fd) {
     Ok(fd) => {
-      match (File.fdReaddir(fd)) {
-        Ok(entries) => {
-          from File use { type DirectoryEntry }
-          Ok(Array.toList(Array.map(entry => entry.path, entries)))
-        },
+      match (File.pathUnlink(fd, "")) {
+        Ok(a) => Ok(a),
         Err(Wasi.SystemError(err)) => {
           File.fdClose(fd)
           Err(errnoToFileError(err))
@@ -199,6 +190,66 @@ provide let remove = (path, removeType=RemoveFile) => {
   }
 }
 
+let readDirectory = fd =>
+  match (File.fdReaddir(fd)) {
+    Ok(entries) => {
+      from File use { type DirectoryEntry }
+      Ok(Array.toList(Array.map(entry => entry.path, entries)))
+    },
+    Err(Wasi.SystemError(err)) => {
+      File.fdClose(fd)
+      Err(errnoToFileError(err))
+    },
+    _ => fail "Impossible: non-wasi error",
+  }
+
+let removeDir = (path, force=false) => {
+  let fd = File.open(
+    Path.toString(path),
+    [File.Directory],
+    [File.PathRemoveDirectory, File.PathUnlinkFile, File.FdReaddir],
+    [File.FdRead],
+    []
+  )
+
+  match (fd) {
+    Ok(fd) => {
+      match (readDirectory(fd)) {
+        Ok(a) => {
+          match (a) {
+            [first, ...rest] => Err(DirectoryNotEmpty),
+            [] => {
+              match (File.pathRemoveDirectory(fd, "")) {
+                Ok(a) => Ok(a),
+                Err(Wasi.SystemError(err)) => {
+                  File.fdClose(fd)
+                  Err(errnoToFileError(err))
+                },
+                _ => fail "Impossible: non-wasi error",
+              }
+            },
+          }
+        },
+        Err(error) => {
+          File.fdClose(fd)
+          Err(error)
+        },
+        _ => fail "Impossible: non-wasi error",
+      }
+    },
+    Err(Wasi.SystemError(err)) => Err(errnoToFileError(err)),
+    _ => fail "Impossible: non-wasi error",
+  }
+}
+
+provide let remove = (path, removeType=RemoveFile) =>
+  match (removeType) {
+    RemoveFile => removeFile(path),
+    RemoveEmptyDirectory => removeDir(path),
+    RemoveDirectoryRecursive =>
+      Ok(print("RemoveDirectoryRecursive Not implemented")),
+  }
+
 provide let readDir = dirPath => {
   let fd = File.open(
     Path.toString(dirPath),
@@ -208,19 +259,7 @@ provide let readDir = dirPath => {
     []
   )
   match (fd) {
-    Ok(fd) => {
-      match (File.fdReaddir(fd)) {
-        Ok(entries) => {
-          from File use { type DirectoryEntry }
-          Ok(Array.toList(Array.map(entry => entry.path, entries)))
-        },
-        Err(Wasi.SystemError(err)) => {
-          File.fdClose(fd)
-          Err(errnoToFileError(err))
-        },
-        _ => fail "Impossible: non-wasi error",
-      }
-    },
+    Ok(fd) => readDirectory(fd),
     Err(Wasi.SystemError(err)) => Err(errnoToFileError(err)),
     _ => fail "Impossible: non-wasi error",
   }
@@ -235,6 +274,7 @@ provide module Binary {
    * 
    * @since v0.6.0
    */
+
   provide let readFile = path => {
     // TODO double-check flags
     let fd = File.open(
@@ -282,7 +322,7 @@ provide module Binary {
   provide let writeFile = (path, data) => {
     let fd = File.open(
       Path.toString(path),
-      [File.Truncate],
+      [File.Truncate, File.Create],
       [File.FdWrite],
       [File.FdWrite],
       []
@@ -346,7 +386,7 @@ provide module Utf8 {
     let bytes = Binary.readFile(path)
     Result.map(bytes => String.decode(bytes, String.UTF8), bytes)
   }
-  
+
   provide let writeFile = (path, data) => {
     let bytes = String.encode(data, String.UTF8)
     Binary.writeFile(path, bytes)
